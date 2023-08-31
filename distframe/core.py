@@ -1,16 +1,23 @@
 import pandas as pd
 import numpy as np
 
-from .utils import to_squareform
+from .utils import to_squareform, get_max_axis, get_min_axis
 
 
-class DistFrame:
-    """DataFrame-like wrapper around condensed distance matrix.
+class VectFrame:
+    """DataFrame-like wrapper around condensed matrix.
+
+    This is the generic implementation with arbitrary diagonal (i.e. could also
+    be used for similarity matrices).
 
     Parameters
     ----------
     data :      array-like
-                Condensed (N, ) distance matrix.
+                Condensed (N, ) matrix.
+    diagonal :  int | float
+                The value of along the diagonal. For example 0 for condensed
+                distance matrices. Note that this will be cast to the same
+                data type as `data`.
     index :     array-like
                 Index to use for resulting frame. Will default to pandas.RangeIndex
                 if no indexing information part of input data and no index provided.
@@ -20,14 +27,15 @@ class DistFrame:
 
     """
 
-    def __init__(self, data, index=None, columns=None, copy=False):
+    def __init__(self, data, diagonal, index=None, columns=None, copy=False):
         data = np.asarray(data)
-
         test_condensed_matrix(data)
 
         self.values = data
         if copy:
             self.values = self.values.copy()
+
+        self.diagonal = diagonal
 
         if columns is None:
             self.columns = pd.RangeIndex(0, len(self))
@@ -43,16 +51,26 @@ class DistFrame:
         self.loc = LocIndexer(self)
 
     def __str__(self):
-        return f'<DistFrame {self.shape}>'
+        return f"<VectFrame {self.shape}>"
 
     def __repr__(self):
         return self.__str__()
 
     def __add__(self, other):
-        return NotImplementedError
+        return VectFrame(
+            self.values + other,
+            diagonal=self.diagonal + other,
+            index=self.index.copy(),
+            columns=self.columns.copy(),
+        )
 
     def __subtract___(self, other):
-        return NotImplementedError
+        return VectFrame(
+            self.values - other,
+            diagonal=self.diagonal - other,
+            index=self.index.copy(),
+            columns=self.columns.copy(),
+        )
 
     def __getattr__(self, name):
         if name not in self.columns:
@@ -72,23 +90,97 @@ class DistFrame:
         return (n, n)
 
     def copy(self):
-        return DistFrame(
-            self.values.copy(), columns=self.columns.copy(), index=self.index.copy()
+        """Make copy of self."""
+        return VectFrame(
+            self.values.copy(),
+            diagonal=self.diagonal,
+            columns=self.columns.copy(),
+            index=self.index.copy(),
         )
 
     def max(self, axis=0):
-        return NotImplementedError
+        """Return the maximum of the values over the requested axis.
 
-    def min(self, axis=1):
-        return NotImplementedError
+        Parameters
+        ----------
+        axis :  0 (index) | 1 (columns) | None
+                Over which axis to calculate the maximum values. Set to ``None``
+                to get the overall maximum.
+
+        """
+        assert axis in (None, 0, 1)
+
+        if axis is None:
+            mx = self.values.max()
+            if mx < self.diagonal:
+                mx = self.diagonal
+        else:
+            mx = pd.Series(
+                get_max_axis(self.values, diagonal=self.diagonal),
+                index=self.index if axis == 0 else self.columns,
+            )
+        return mx
+
+    def min(self, axis=0):
+        """Return the minimum of the values over the requested axis.
+
+        Parameters
+        ----------
+        axis :  0 (index) | 1 (columns) | None
+                Over which axis to calculate the minimum values. Set to ``None``
+                to get the overall minimum.
+
+        """
+        assert axis in (None, 0, 1)
+
+        if axis is None:
+            mn = self.values.min()
+            if mn < self.diagonal:
+                mn = self.diagonal
+        else:
+            mn = pd.Series(
+                get_min_axis(self.values, diagonal=self.diagonal),
+                index=self.index if axis == 0 else self.columns,
+            )
+        return mn
 
     def to_squareform(self):
-        """Turn condensed (vector-form) into square-form distance matrix."""
+        """Turn condensed (vector-form) into square-form matrix.
+
+        Returns
+        -------
+        M :     pandas.DataFrame
+                Redundant matrix.
+
+        """
         return pd.DataFrame(
-            to_squareform(self.values),
+            to_squareform(self.values, diagonal=self.diagonal),
             index=self.index.copy(),
             columns=self.columns.copy(),
         )
+
+
+class DistFrame(VectFrame):
+    """DataFrame-like wrapper around condensed distance matrix.
+
+    Parameters
+    ----------
+    data :      array-like
+                Condensed (N, ) distance matrix.
+    index :     array-like
+                Index to use for resulting frame. Will default to pandas.RangeIndex
+                if no indexing information part of input data and no index provided.
+    columns :   array-like
+                Column labels to use for resulting frame when data does not have
+                them, defaulting to RangeIndex(0, 1, 2, ..., n).
+
+    """
+
+    def __init__(self, data, index=None, columns=None, copy=False):
+        super().__init__(data, diagonal=0, index=index, columns=columns, copy=copy)
+
+    def __str__(self):
+        return f"<DistFrame {self.shape}>"
 
 
 def test_condensed_matrix(data):
